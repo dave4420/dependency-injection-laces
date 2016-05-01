@@ -1,6 +1,7 @@
 module Lib
 ( Inject()
 , inject
+, unInject
 , Dependable()
 , use
 , Module()
@@ -27,21 +28,27 @@ inject = Inject
 unInject :: Inject a -> a
 unInject (Inject x) = x
 
+data Dependencies = Dependencies
+  { dependenciesTarget :: TypeRep
+  , dependenciesDependencies :: [TypeRep]
+  , dependenciesFinalise :: Dynamic
+  }
+
 class Typeable a => Dependable a where
-  depend :: a -> (TypeRep, [TypeRep])
+  depend :: a -> Dependencies
 
 instance Typeable a => Dependable (Inject a) where
-  depend a = (typeRep a, [])
+  depend a = Dependencies (typeRep a) [] (toDyn (unInject :: Inject a -> a))
 
 instance (Typeable i, Dependable o) => Dependable (i -> o) where
-  depend f = (baseRep, typeRep (Flip f) : paramReps) where
-    (baseRep, paramReps) = depend (f undefined)
+  depend f = inner {dependenciesDependencies = typeRep (Flip f) : dependenciesDependencies inner} where
+    inner = (depend $ f undefined)
 
 newtype Flip a b c = Flip (a c b)
 
 use :: Dependable a => a -> Module
-use factory = Module $ M.singleton resultRep [Injection (toDyn factory) paramReps] where
-  (resultRep, paramReps) = depend factory
+use factory = Module $ M.singleton dependenciesTarget [Injection (toDyn factory) dependenciesDependencies dependenciesFinalise] where
+  Dependencies{..} = depend factory
 
 
 newtype Module = Module (M.Map TypeRep [Injection])
@@ -49,6 +56,7 @@ newtype Module = Module (M.Map TypeRep [Injection])
 data Injection = Injection
   { injectionBase :: Dynamic
   , injectionDependencies :: [TypeRep]
+  , injectionFinalise :: Dynamic
   }
 
 data DependencyError = MissingDependency TypeRep | DuplicateDependency TypeRep
@@ -75,17 +83,27 @@ dependencyMay module' = case dependencyWhy module' of
 dependencyWhy :: forall a. Typeable a => Module -> Either [DependencyError] a
 dependencyWhy (Module moduleMap) = ret where
   ret :: Either [DependencyError] a
-  ret = fmap (unInject . (`fromDyn` error "BUG in injectedWhy: wrong return type")) (dependency $ typeRep ret)
+  ret = fmap unDynamic (dependency $ typeRep ret) where
+    unDynamic :: Dynamic -> a
+    unDynamic dyn = fromDyn dyn (error (unwords ["BUG in injectedWhy: wrong return type", showDynType dyn]))
   dependency :: TypeRep -> Either [DependencyError] Dynamic
   dependency rep = case fromMaybe [] (M.lookup rep moduleMap) of
     []              -> Left [MissingDependency rep]
-    [Injection{..}] -> foldr cons (Right injectionBase) injectionDependencies
+    [Injection{..}] -> fmap (apply injectionFinalise)
+                       $ foldr cons (Right injectionBase) (reverse injectionDependencies)
     _               -> Left [DuplicateDependency rep]
   cons :: TypeRep -> Either [DependencyError] Dynamic -> Either [DependencyError] Dynamic
   cons xRep fDyn = apply <$> fDyn <+> dependency xRep
   apply :: Dynamic -> Dynamic -> Dynamic
   apply fDyn xDyn
-      = fromMaybe (error "BUG in injectedWhy: incompatible types when injecting dependencies") (dynApply fDyn xDyn)
+      = fromMaybe
+          (error $ unwords
+            [ "BUG in injectedWhy: incompatible types when applying function;"
+            , showDynType fDyn
+            , showDynType xDyn
+            ]
+          )
+          (dynApply fDyn xDyn)
 
 infixl 4 <+> -- same as <*>
 (<+>) :: Monoid e => Either e (a -> b) -> Either e a -> Either e b
@@ -93,3 +111,6 @@ Left e <+> Left e' = Left (e <> e')
 Left e <+> Right _ = Left e
 Right _ <+> Left e' = Left e'
 Right f <+> Right x = Right (f x)
+
+showDynType :: Dynamic -> String
+showDynType dyn = "(" ++ (show . dynTypeRep) dyn ++ ")"
