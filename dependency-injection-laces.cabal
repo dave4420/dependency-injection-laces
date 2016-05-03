@@ -5,10 +5,10 @@ description:         Please see README.md
 homepage:            https://github.com/githubuser/dependency-injection#readme
 license:             BSD3
 license-file:        LICENSE
-author:              Author name here
-maintainer:          example@example.com
-copyright:           2016 Author name here
-category:            Web
+author:              Dave Hinton
+maintainer:          dave_a_hinton@yahoo.co.uk
+copyright:           © 2016 Dave Hinton
+category:            Dependency Injection
 build-type:          Simple
 -- extra-source-files:
 cabal-version:       >=1.10
@@ -38,6 +38,6 @@ test-suite dependency-injection-laces-test
   default-extensions:  TemplateHaskell
                      , GeneralizedNewtypeDeriving
 
---source-repository head
---  type:     git
---  location: https://github.com/githubuser/dependency-injection
+source-repository head
+  type:     git
+  location: https://github.com/dave4420/dependency-injection-laces.git
