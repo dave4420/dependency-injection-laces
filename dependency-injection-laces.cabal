@@ -1,4 +1,4 @@
-name:                dependency-injection
+name:                dependency-injection-laces
 version:             0.1.0.0
 synopsis:            Initial project template from stack
 description:         Please see README.md
@@ -15,19 +15,19 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Lib
+  exposed-modules:     DependencyInjection.Laces
   build-depends:       base >= 4.7 && < 5
                      , containers == 0.5.*
   default-language:    Haskell2010
   default-extensions:  RecordWildCards
                      , ScopedTypeVariables
 
-test-suite dependency-injection-test
+test-suite dependency-injection-laces-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
   build-depends:       base
-                     , dependency-injection
+                     , dependency-injection-laces
                      , QuickCheck
                      , quickcheck-instances
                      , tasty

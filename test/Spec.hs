@@ -6,7 +6,7 @@ import Test.Tasty.TH
 
 import Data.Typeable
 
-import Lib
+import DependencyInjection.Laces
 
 main :: IO ()
 main = defaultMain tests

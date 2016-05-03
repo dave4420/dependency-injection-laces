@@ -1,4 +1,4 @@
-module Lib
+module DependencyInjection.Laces
 ( Inject()
 , inject
 , unInject
