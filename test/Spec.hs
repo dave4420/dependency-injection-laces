@@ -35,7 +35,7 @@ prop_retrieveTargetThatHasNoDependencies = do
           , use $ inject givenBar
           , use composite
           ]
-  let result = dependencyWhy module'
+  let result = componentWhy module'
   return $ result === Right (givenFoo)
 
 prop_retrieveTargetThatHasDependencies = do
@@ -47,7 +47,7 @@ prop_retrieveTargetThatHasDependencies = do
           , use $ inject givenBar
           , use composite
           ]
-  let result = dependencyWhy module'
+  let result = componentWhy module'
   return $ result === Right (Composite givenFoo givenBar)
 
 prop_failWhenTargetNotPresent = do
@@ -59,7 +59,7 @@ prop_failWhenTargetNotPresent = do
           , use composite
           ]
   let result :: Either [DependencyError] Foo
-      result = dependencyWhy module'
+      result = componentWhy module'
   return $ result === Left [MissingDependency (typeOf givenFoo)]
 
 prop_failWhenDependencyNotPresent = do
@@ -71,7 +71,7 @@ prop_failWhenDependencyNotPresent = do
           , use composite
           ]
   let result :: Either [DependencyError] Composite
-      result = dependencyWhy module'
+      result = componentWhy module'
   return $ result === Left [MissingDependency (typeOf givenFoo)]
 
 prop_failWhenDuplicatesPresent = do
@@ -85,5 +85,5 @@ prop_failWhenDuplicatesPresent = do
           , use composite
           ]
   let result :: Either [DependencyError] Composite
-      result = dependencyWhy module'
+      result = componentWhy module'
   return $ result === Left [DuplicateDependency (typeOf givenFoo)]

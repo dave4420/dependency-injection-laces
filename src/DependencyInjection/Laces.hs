@@ -6,9 +6,9 @@ module DependencyInjection.Laces
 , use
 , Module()
 , DependencyError(..)
-, dependencyOrThrow
-, dependencyMay
-, dependencyWhy
+, componentOrThrow
+, componentMay
+, componentWhy
 )
 where
 
@@ -70,22 +70,22 @@ instance Monoid Module where
   mempty = Module mempty
   Module x `mappend` Module y = Module (M.unionWith (<>) x y)
 
-dependencyOrThrow :: Typeable a => Module -> a
-dependencyOrThrow module' = case dependencyWhy module' of
+componentOrThrow :: Typeable a => Module -> a
+componentOrThrow module' = case componentWhy module' of
   Left errors -> throw (DependencyException errors)
   Right dependency -> dependency
 
-dependencyMay :: Typeable a => Module -> Maybe a
-dependencyMay module' = case dependencyWhy module' of
+componentMay :: Typeable a => Module -> Maybe a
+componentMay module' = case componentWhy module' of
   Left _errors -> Nothing
   Right dependency -> Just dependency
 
-dependencyWhy :: forall a. Typeable a => Module -> Either [DependencyError] a
-dependencyWhy (Module moduleMap) = ret where
+componentWhy :: forall a. Typeable a => Module -> Either [DependencyError] a
+componentWhy (Module moduleMap) = ret where
   ret :: Either [DependencyError] a
   ret = fmap unDynamic (dependency $ typeRep ret) where
     unDynamic :: Dynamic -> a
-    unDynamic dyn = fromDyn dyn (error (unwords ["BUG in injectedWhy: wrong return type", showDynType dyn]))
+    unDynamic dyn = fromDyn dyn (bug ["wrong return type", showDynType dyn])
   dependency :: TypeRep -> Either [DependencyError] Dynamic
   dependency rep = case fromMaybe [] (M.lookup rep moduleMap) of
     []              -> Left [MissingDependency rep]
@@ -97,8 +97,8 @@ dependencyWhy (Module moduleMap) = ret where
   apply :: Dynamic -> Dynamic -> Dynamic
   apply fDyn xDyn
       = fromMaybe
-          (error $ unwords
-            [ "BUG in injectedWhy: incompatible types when applying function;"
+          (bug
+            [ "incompatible types when applying function;"
             , showDynType fDyn
             , showDynType xDyn
             ]
@@ -107,10 +107,13 @@ dependencyWhy (Module moduleMap) = ret where
 
 infixl 4 <+> -- same as <*>
 (<+>) :: Monoid e => Either e (a -> b) -> Either e a -> Either e b
-Left e <+> Left e' = Left (e <> e')
+Left e <+> Left e' = Left (e <> e') -- different from
 Left e <+> Right _ = Left e
 Right _ <+> Left e' = Left e'
 Right f <+> Right x = Right (f x)
 
 showDynType :: Dynamic -> String
 showDynType dyn = "(" ++ (show . dynTypeRep) dyn ++ ")"
+
+bug :: [String] -> a
+bug = error . unwords . ("BUG in DependencyInjection.Laces:" :)
