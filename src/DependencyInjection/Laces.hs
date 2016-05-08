@@ -2,6 +2,9 @@ module DependencyInjection.Laces
 ( Inject()
 , inject
 , unInject
+, InjectM()
+, injectM
+, unInjectM
 , Dependable()
 , use
 , Module()
@@ -10,6 +13,9 @@ module DependencyInjection.Laces
 , componentOrThrow
 , componentMay
 , componentWhy
+, componentOrThrowM
+, componentMayM
+, componentWhyM
 )
 where
 
@@ -29,6 +35,15 @@ inject = Inject
 unInject :: Inject a -> a
 unInject (Inject x) = x
 
+newtype InjectM m a = InjectM (m a)
+  deriving Typeable
+
+injectM :: m a -> InjectM m a
+injectM = InjectM
+
+unInjectM :: InjectM m a -> m a
+unInjectM (InjectM x) = x
+
 data Dependencies = Dependencies
   { dependenciesTarget :: TypeRep
   , dependenciesDependencies :: [TypeRep]
@@ -40,6 +55,9 @@ class Typeable a => Dependable a where
 
 instance Typeable a => Dependable (Inject a) where
   depend a = Dependencies (typeRep a) [] (toDyn (unInject :: Inject a -> a))
+
+instance (Monad m, Typeable m, Typeable a) => Dependable (InjectM m a) where
+  depend ma = undefined
 
 instance (Typeable i, Dependable o) => Dependable (i -> o) where
   depend f = inner {dependenciesDependencies = typeRep (Flip f) : dependenciesDependencies inner} where
@@ -106,6 +124,15 @@ componentWhy (Module moduleMap) = ret where
             ]
           )
           (dynApply fDyn xDyn)
+
+componentOrThrowM :: (Monad m, Typeable a) => ModuleM m -> m a
+componentOrThrowM = undefined
+
+componentMayM :: (Monad m, Typeable a) => ModuleM m -> m (Maybe a)
+componentMayM = undefined
+
+componentWhyM :: forall m a. (Monad m, Typeable a) => ModuleM m -> m (Either [DependencyError] a)
+componentWhyM = undefined
 
 infixl 4 <+> -- same as <*>
 (<+>) :: Monoid e => Either e (a -> b) -> Either e a -> Either e b
