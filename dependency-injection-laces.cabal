@@ -21,6 +21,8 @@ library
   default-language:    Haskell2010
   default-extensions:  RecordWildCards
                      , ScopedTypeVariables
+                     , KindSignatures
+                     , RankNTypes
 
 test-suite dependency-injection-laces-test
   type:                exitcode-stdio-1.0

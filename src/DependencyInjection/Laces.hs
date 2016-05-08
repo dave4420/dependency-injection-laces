@@ -5,6 +5,7 @@ module DependencyInjection.Laces
 , Dependable()
 , use
 , Module()
+, ModuleM()
 , DependencyError(..)
 , componentOrThrow
 , componentMay
@@ -51,7 +52,8 @@ use factory = Module $ M.singleton dependenciesTarget [Injection (toDyn factory)
   Dependencies{..} = depend factory
 
 
-newtype Module = Module (M.Map TypeRep [Injection])
+newtype ModuleM (m :: * -> *) = Module (M.Map TypeRep [Injection])
+type Module = forall m. ModuleM m
 
 data Injection = Injection
   { injectionBase :: Dynamic
@@ -66,7 +68,7 @@ data DependencyException = DependencyException [DependencyError]
   deriving (Show, Typeable)
 instance Exception DependencyException
 
-instance Monoid Module where
+instance Monoid (ModuleM m) where
   mempty = Module mempty
   Module x `mappend` Module y = Module (M.unionWith (<>) x y)
 
