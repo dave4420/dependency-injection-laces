@@ -91,14 +91,10 @@ instance Monoid (ModuleM m) where
   Module x `mappend` Module y = Module (M.unionWith (<>) x y)
 
 componentOrThrow :: Typeable a => Module -> a
-componentOrThrow module' = case componentWhy module' of
-  Left errors -> throw (DependencyException errors)
-  Right dependency -> dependency
+componentOrThrow = orThrow . componentWhy
 
 componentMay :: Typeable a => Module -> Maybe a
-componentMay module' = case componentWhy module' of
-  Left _errors -> Nothing
-  Right dependency -> Just dependency
+componentMay = hush . componentWhy
 
 componentWhy :: forall a. Typeable a => Module -> Either [DependencyError] a
 componentWhy (Module moduleMap) = ret where
@@ -126,10 +122,10 @@ componentWhy (Module moduleMap) = ret where
           (dynApply fDyn xDyn)
 
 componentOrThrowM :: (Monad m, Typeable a) => ModuleM m -> m a
-componentOrThrowM = undefined
+componentOrThrowM = fmap orThrow . componentWhyM
 
 componentMayM :: (Monad m, Typeable a) => ModuleM m -> m (Maybe a)
-componentMayM = undefined
+componentMayM = fmap hush . componentWhyM
 
 componentWhyM :: forall m a. (Monad m, Typeable a) => ModuleM m -> m (Either [DependencyError] a)
 componentWhyM = undefined
@@ -143,6 +139,14 @@ Right f <+> Right x = Right (f x)
 
 showDynType :: Dynamic -> String
 showDynType dyn = "(" ++ (show . dynTypeRep) dyn ++ ")"
+
+orThrow :: Either [DependencyError] a -> a
+orThrow (Left errors)     = throw (DependencyException errors)
+orThrow (Right component) = component
+
+hush :: Either e a -> Maybe a
+hush (Left _)  = Nothing
+hush (Right x) = Just x
 
 bug :: [String] -> a
 bug = error . unwords . ("BUG in DependencyInjection.Laces:" :)
