@@ -21,6 +21,7 @@ where
 
 import Control.Exception
 import Data.Dynamic
+import Data.Functor.Identity
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Monoid
@@ -96,7 +97,9 @@ componentOrThrow = orThrow . componentWhy
 componentMay :: Typeable a => Module -> Maybe a
 componentMay = hush . componentWhy
 
-componentWhy :: forall a. Typeable a => Module -> Either [DependencyError] a
+componentWhy :: {-forall a.-} Typeable a => Module -> Either [DependencyError] a
+componentWhy module' = (runIdentity . componentWhyM) module' -- pointfree version doesn't compile
+{-
 componentWhy (Module moduleMap) = ret where
   ret :: Either [DependencyError] a
   ret = fmap unDynamic (dependency $ typeRep ret) where
@@ -120,15 +123,18 @@ componentWhy (Module moduleMap) = ret where
             ]
           )
           (dynApply fDyn xDyn)
+-}
 
-componentOrThrowM :: (Monad m, Typeable a) => ModuleM m -> m a
+componentOrThrowM :: (Monad m, Typeable m, Typeable a) => ModuleM m -> m a
 componentOrThrowM = fmap orThrow . componentWhyM
 
-componentMayM :: (Monad m, Typeable a) => ModuleM m -> m (Maybe a)
+componentMayM :: (Monad m, Typeable m, Typeable a) => ModuleM m -> m (Maybe a)
 componentMayM = fmap hush . componentWhyM
 
-componentWhyM :: forall m a. (Monad m, Typeable a) => ModuleM m -> m (Either [DependencyError] a)
-componentWhyM = undefined
+componentWhyM :: forall m a. (Monad m, Typeable m, Typeable a) => ModuleM m -> m (Either [DependencyError] a)
+componentWhyM (Module moduleMap) = ret where
+  ret :: m (Either [DependencyError] a)
+  ret = undefined
 
 infixl 4 <+> -- same as <*>
 (<+>) :: Monoid e => Either e (a -> b) -> Either e a -> Either e b
@@ -150,3 +156,58 @@ hush (Right x) = Just x
 
 bug :: [String] -> a
 bug = error . unwords . ("BUG in DependencyInjection.Laces:" :)
+
+
+data ImpureDynamic = ImpureDynamic
+  { impureDynamicValue :: Dynamic
+  , impureDynamicAp :: ImpureAp
+  }
+
+data ImpureAp
+  = PureAp -- ^ accompanying value is pure; requires no knowledge of the specific monad we're using
+  | ImpureAp -- ^ accompanying value is impure
+    { impureApAp :: Dynamic -- ^ ...and this is how to combine it with another impure function/value
+    , impureApFmap :: Dynamic -- ^ ...and this is how to combine it with a pure function
+    , impureApReverseFmap :: Dynamic -- ^ ...and this is how to combine it with a pure value
+    }
+
+unImpureDynamic :: (Applicative f, Typeable f, Typeable a) => ImpureDynamic -> f a
+unImpureDynamic ImpureDynamic {impureDynamicValue = dyn, impureDynamicAp = PureAp{}}
+  = (pure . fromDyn dyn) (bug ["wrong pure return type", showDynType dyn])
+unImpureDynamic ImpureDynamic {impureDynamicValue = dyn, impureDynamicAp = ImpureAp{}}
+  = fromDyn dyn (bug ["wrong impure return type", showDynType dyn])
+
+apply :: ImpureDynamic -> ImpureDynamic -> ImpureDynamic
+apply ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynF}
+      ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynX}
+    = ImpureDynamic{..}
+  where
+    impureDynamicAp = PureAp
+    impureDynamicValue = dynApplyBug ["incompatible types when applying pure function to pure value"] dynF dynX
+apply ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynF}
+      ImpureDynamic {impureDynamicAp = impureDynamicAp @ ImpureAp {impureApFmap = dynMeta}, impureDynamicValue = dynX}
+    = ImpureDynamic{..}
+  where
+    impureDynamicValue
+      = dynApplyBug ["incompatible type when applying pure function to impure value (2)"]
+                    (dynApplyBug ["incompatible type when applying pure function to impure value (1)"] dynMeta dynF)
+                    dynX
+apply ImpureDynamic {impureDynamicAp = impureDynamicAp @ ImpureAp {impureApReverseFmap = dynMeta}, impureDynamicValue = dynF}
+      ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynX}
+    = ImpureDynamic{..}
+  where
+    impureDynamicValue
+      = dynApplyBug ["incompatible type when applying impure function to pure value (2)"]
+                    (dynApplyBug ["incompatible type when applying impure function to pure value (1)"] dynMeta dynF)
+                    dynX
+apply ImpureDynamic {impureDynamicAp = ImpureAp{}, impureDynamicValue = dynF}
+      ImpureDynamic {impureDynamicAp = impureDynamicAp @ ImpureAp {impureApAp = dynMeta}, impureDynamicValue = dynX}
+    = ImpureDynamic{..}
+  where
+    impureDynamicValue
+      = dynApplyBug ["incompatible type when applying impure function to impure value (2)"]
+                    (dynApplyBug ["incompatible type when applying impure function to impure value (1)"] dynMeta dynF)
+                    dynX
+
+dynApplyBug :: [String] -> Dynamic -> Dynamic -> Dynamic
+dynApplyBug report dynF dynX = fromMaybe (bug $ report ++ [showDynType dynF, showDynType dynX]) (dynApply dynF dynX)
