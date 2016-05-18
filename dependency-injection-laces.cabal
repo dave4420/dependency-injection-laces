@@ -16,8 +16,10 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     DependencyInjection.Laces
+  other-modules:       DependencyInjection.Laces.ImpureDynamic
   build-depends:       base >= 4.7 && < 5
                      , containers == 0.5.*
+                     , ghc-prim == 0.4.*
   default-language:    Haskell2010
   default-extensions:  RecordWildCards
                      , ScopedTypeVariables

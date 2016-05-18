@@ -20,12 +20,12 @@ module DependencyInjection.Laces
 where
 
 import Control.Exception
-import Data.Dynamic
 import Data.Functor.Identity
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Monoid
 
+import DependencyInjection.Laces.ImpureDynamic
 
 newtype Inject a = Inject a
   deriving Typeable
@@ -45,14 +45,14 @@ injectM = InjectM
 unInjectM :: InjectM m a -> m a
 unInjectM (InjectM x) = x
 
-data Dependencies = Dependencies
+data Dependencies m = Dependencies
   { dependenciesTarget :: TypeRep
   , dependenciesDependencies :: [TypeRep]
-  , dependenciesFinalise :: ImpureDynamic
+  , dependenciesFinalise :: ImpureDynamic m
   }
 
 class Typeable a => Dependable a where
-  depend :: a -> Dependencies
+  depend :: a -> (forall m. Dependencies m)
 
 instance Typeable a => Dependable (Inject a) where
   depend a = Dependencies (typeRep a) [] (toPureDynamic (unInject :: Inject a -> a))
@@ -71,13 +71,13 @@ use factory = Module $ M.singleton dependenciesTarget [Injection (toPureDynamic 
   Dependencies{..} = depend factory
 
 
-newtype ModuleM (m :: * -> *) = Module (M.Map TypeRep [Injection])
+newtype ModuleM (m :: * -> *) = Module (M.Map TypeRep [Injection m])
 type Module = forall m. ModuleM m
 
-data Injection = Injection
-  { injectionBase :: ImpureDynamic
+data Injection m = Injection
+  { injectionBase :: ImpureDynamic m
   , injectionDependencies :: [TypeRep]
-  , injectionFinalise :: ImpureDynamic
+  , injectionFinalise :: ImpureDynamic m
   }
 
 data DependencyError = MissingDependency TypeRep | DuplicateDependency TypeRep
@@ -99,31 +99,6 @@ componentMay = hush . componentWhy
 
 componentWhy :: {-forall a.-} Typeable a => Module -> Either [DependencyError] a
 componentWhy module' = (runIdentity . componentWhyM) module' -- pointfree version doesn't compile
-{-
-componentWhy (Module moduleMap) = ret where
-  ret :: Either [DependencyError] a
-  ret = fmap unDynamic (dependency $ typeRep ret) where
-    unDynamic :: Dynamic -> a
-    unDynamic dyn = fromDyn dyn (bug ["wrong return type", showDynType dyn])
-  dependency :: TypeRep -> Either [DependencyError] Dynamic
-  dependency rep = case fromMaybe [] (M.lookup rep moduleMap) of
-    []              -> Left [MissingDependency rep]
-    [Injection{..}] -> fmap (apply injectionFinalise)
-                       $ foldr cons (Right injectionBase) (reverse injectionDependencies)
-    _               -> Left [DuplicateDependency rep]
-  cons :: TypeRep -> Either [DependencyError] Dynamic -> Either [DependencyError] Dynamic
-  cons xRep fDyn = apply <$> fDyn <+> dependency xRep
-  apply :: Dynamic -> Dynamic -> Dynamic
-  apply fDyn xDyn
-      = fromMaybe
-          (bug
-            [ "incompatible types when applying function;"
-            , showDynType fDyn
-            , showDynType xDyn
-            ]
-          )
-          (dynApply fDyn xDyn)
--}
 
 componentOrThrowM :: (Monad m, Typeable m, Typeable a) => ModuleM m -> m a
 componentOrThrowM = fmap orThrow . componentWhyM
@@ -137,20 +112,15 @@ componentWhyM = sequence . componentWhyF
 componentWhyF :: forall m a. (Monad m, Typeable m, Typeable a) => ModuleM m -> Either [DependencyError] (m a)
 componentWhyF (Module moduleMap) = ret where
   ret :: Either [DependencyError] (m a)
-  ret = fmap unImpureDynamic (dependency $ typeRep $ Compose ret)
-  dependency :: TypeRep -> Either [DependencyError] ImpureDynamic
+  ret = fmap unImpureDynamicBug (dependency $ typeRep $ Compose ret)
+  dependency :: TypeRep -> Either [DependencyError] (ImpureDynamic m)
   dependency rep = case fromMaybe [] (M.lookup rep moduleMap) of
     []              -> Left [MissingDependency rep]
-    [Injection{..}] -> fmap (apply' injectionFinalise)
+    [Injection{..}] -> fmap (applyBug injectionFinalise)
                        $ foldr cons (Right injectionBase) (reverse injectionDependencies)
     _               -> Left [DuplicateDependency rep]
-  cons :: TypeRep -> Either [DependencyError] ImpureDynamic -> Either [DependencyError] ImpureDynamic
-  cons xRep fDyn = apply' <$> fDyn <+> dependency xRep
-  apply' :: ImpureDynamic -> ImpureDynamic -> ImpureDynamic
-  apply' = apply Ap{..} where
-    apAp = toDyn ((<*>) :: m (() -> ()) -> m () -> m ())
-    apFmap = toDyn ((<$>) :: (() -> ()) -> m () -> m ())
-    apReverseFmap = toDyn ((\mf x -> ($ x) <$> mf) :: m (() -> ()) -> () -> m ())
+  cons :: TypeRep -> Either [DependencyError] (ImpureDynamic m) -> Either [DependencyError] (ImpureDynamic m)
+  cons xRep fDyn = applyBug <$> fDyn <+> dependency xRep
 
 infixl 4 <+> -- same as <*>
 (<+>) :: Monoid e => Either e (a -> b) -> Either e a -> Either e b
@@ -159,8 +129,8 @@ Left e <+> Right _ = Left e
 Right _ <+> Left e' = Left e'
 Right f <+> Right x = Right (f x)
 
-showDynType :: Dynamic -> String
-showDynType dyn = "(" ++ (show . dynTypeRep) dyn ++ ")"
+showDynType :: ImpureDynamic m -> String
+showDynType dyn = "(" ++ (show . impureDynamicTypeRep) dyn ++ ")"
 
 orThrow :: Either [DependencyError] a -> a
 orThrow (Left errors)     = throw (DependencyException errors)
@@ -174,74 +144,14 @@ bug :: [String] -> a
 bug = error . unwords . ("BUG in DependencyInjection.Laces:" :)
 
 
-data ImpureDynamic = ImpureDynamic
-  { impureDynamicValue :: Dynamic
-  , impureDynamicAp :: ImpureAp
-  }
+applyBug :: Applicative m => ImpureDynamic m -> ImpureDynamic m -> ImpureDynamic m
+applyBug dynF dynX
+  = fromMaybe (bug ["incompatible types when applying function:", showDynType dynF, showDynType dynX])
+              (applyImpureDynamic dynF dynX)
 
-data ImpureAp
-  = PureAp -- ^ accompanying value is pure; requires no knowledge of the specific monad we're using
-  | ImpureAp -- ^ accompanying value is impure
-
-data Ap = Ap
-  { apAp :: Dynamic
-  , apFmap :: Dynamic
-  , apReverseFmap :: Dynamic
-  }
-
-toPureDynamic :: Typeable a => a -> ImpureDynamic
-toPureDynamic x = ImpureDynamic{..} where
-  impureDynamicValue = toDyn x
-  impureDynamicAp = PureAp
-
-unImpureDynamic :: (Applicative f, Typeable f, Typeable a) => ImpureDynamic -> f a
-unImpureDynamic ImpureDynamic {impureDynamicValue = dyn, impureDynamicAp = PureAp{}}
-  = (pure . fromDyn dyn) (bug ["wrong pure return type", showDynType dyn])
-unImpureDynamic ImpureDynamic {impureDynamicValue = dyn, impureDynamicAp = ImpureAp{}}
-  = fromDyn dyn (bug ["wrong impure return type", showDynType dyn])
-
-apply :: Ap -> ImpureDynamic -> ImpureDynamic -> ImpureDynamic
-apply _
-      ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynF}
-      ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynX}
-    = ImpureDynamic{..}
-  where
-    impureDynamicAp = PureAp
-    impureDynamicValue = dynApplyBug ["incompatible types when applying pure function to pure value"] dynF dynX
-apply Ap{..}
-      ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynF}
-      ImpureDynamic {impureDynamicAp = ImpureAp, impureDynamicValue = dynX}
-    = ImpureDynamic{..}
-  where
-    impureDynamicAp = ImpureAp
-    impureDynamicValue
-      = dynApplyBug ["incompatible type when applying pure function to impure value (2)"]
-                    (dynApplyBug ["incompatible type when applying pure function to impure value (1)"] apFmap dynF)
-                    dynX
-apply Ap{..}
-      ImpureDynamic {impureDynamicAp = ImpureAp, impureDynamicValue = dynF}
-      ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynX}
-    = ImpureDynamic{..}
-  where
-    impureDynamicAp = ImpureAp
-    impureDynamicValue
-      = dynApplyBug ["incompatible type when applying impure function to pure value (2)"]
-                    (dynApplyBug ["incompatible type when applying impure function to pure value (1)"] apReverseFmap dynF)
-                    dynX
-apply Ap{..}
-      ImpureDynamic {impureDynamicAp = ImpureAp, impureDynamicValue = dynF}
-      ImpureDynamic {impureDynamicAp = ImpureAp, impureDynamicValue = dynX}
-    = ImpureDynamic{..}
-  where
-    impureDynamicAp = ImpureAp
-    impureDynamicValue
-      = dynApplyBug ["incompatible type when applying impure function to impure value (2)"]
-                    (dynApplyBug ["incompatible type when applying impure function to impure value (1)"] apAp dynF)
-                    dynX
-
-dynApplyBug :: [String] -> Dynamic -> Dynamic -> Dynamic
-dynApplyBug report dynF dynX = fromMaybe (bug $ report ++ [showDynType dynF, showDynType dynX]) (dynApply dynF dynX)
-
+unImpureDynamicBug :: (Typeable a, Applicative m) => ImpureDynamic m -> m a
+unImpureDynamicBug dyn
+  = fromMaybe (bug ["unexpected type when extracting value", showDynType dyn]) (unImpureDynamic dyn)
 
 -- only using this for type hackery, not worth pulling in a dependency
 newtype Compose f g a = Compose (f (g a))
