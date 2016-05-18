@@ -141,11 +141,16 @@ componentWhyF (Module moduleMap) = ret where
   dependency :: TypeRep -> Either [DependencyError] ImpureDynamic
   dependency rep = case fromMaybe [] (M.lookup rep moduleMap) of
     []              -> Left [MissingDependency rep]
-    [Injection{..}] -> fmap (apply injectionFinalise)
+    [Injection{..}] -> fmap (apply' injectionFinalise)
                        $ foldr cons (Right injectionBase) (reverse injectionDependencies)
     _               -> Left [DuplicateDependency rep]
   cons :: TypeRep -> Either [DependencyError] ImpureDynamic -> Either [DependencyError] ImpureDynamic
-  cons xRep fDyn = apply <$> fDyn <+> dependency xRep
+  cons xRep fDyn = apply' <$> fDyn <+> dependency xRep
+  apply' :: ImpureDynamic -> ImpureDynamic -> ImpureDynamic
+  apply' = apply Ap{..} where
+    apAp = toDyn ((<*>) :: m (() -> ()) -> m () -> m ())
+    apFmap = toDyn ((<$>) :: (() -> ()) -> m () -> m ())
+    apReverseFmap = toDyn ((\mf x -> ($ x) <$> mf) :: m (() -> ()) -> () -> m ())
 
 infixl 4 <+> -- same as <*>
 (<+>) :: Monoid e => Either e (a -> b) -> Either e a -> Either e b
@@ -177,10 +182,12 @@ data ImpureDynamic = ImpureDynamic
 data ImpureAp
   = PureAp -- ^ accompanying value is pure; requires no knowledge of the specific monad we're using
   | ImpureAp -- ^ accompanying value is impure
-    { impureApAp :: Dynamic -- ^ ...and this is how to combine it with another impure function/value
-    , impureApFmap :: Dynamic -- ^ ...and this is how to combine it with a pure function
-    , impureApReverseFmap :: Dynamic -- ^ ...and this is how to combine it with a pure value
-    }
+
+data Ap = Ap
+  { apAp :: Dynamic
+  , apFmap :: Dynamic
+  , apReverseFmap :: Dynamic
+  }
 
 toPureDynamic :: Typeable a => a -> ImpureDynamic
 toPureDynamic x = ImpureDynamic{..} where
@@ -193,36 +200,43 @@ unImpureDynamic ImpureDynamic {impureDynamicValue = dyn, impureDynamicAp = PureA
 unImpureDynamic ImpureDynamic {impureDynamicValue = dyn, impureDynamicAp = ImpureAp{}}
   = fromDyn dyn (bug ["wrong impure return type", showDynType dyn])
 
-apply :: ImpureDynamic -> ImpureDynamic -> ImpureDynamic
-apply ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynF}
+apply :: Ap -> ImpureDynamic -> ImpureDynamic -> ImpureDynamic
+apply _
+      ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynF}
       ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynX}
     = ImpureDynamic{..}
   where
     impureDynamicAp = PureAp
     impureDynamicValue = dynApplyBug ["incompatible types when applying pure function to pure value"] dynF dynX
-apply ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynF}
-      ImpureDynamic {impureDynamicAp = impureDynamicAp @ ImpureAp {impureApFmap = dynMeta}, impureDynamicValue = dynX}
+apply Ap{..}
+      ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynF}
+      ImpureDynamic {impureDynamicAp = ImpureAp, impureDynamicValue = dynX}
     = ImpureDynamic{..}
   where
+    impureDynamicAp = ImpureAp
     impureDynamicValue
       = dynApplyBug ["incompatible type when applying pure function to impure value (2)"]
-                    (dynApplyBug ["incompatible type when applying pure function to impure value (1)"] dynMeta dynF)
+                    (dynApplyBug ["incompatible type when applying pure function to impure value (1)"] apFmap dynF)
                     dynX
-apply ImpureDynamic {impureDynamicAp = impureDynamicAp @ ImpureAp {impureApReverseFmap = dynMeta}, impureDynamicValue = dynF}
+apply Ap{..}
+      ImpureDynamic {impureDynamicAp = ImpureAp, impureDynamicValue = dynF}
       ImpureDynamic {impureDynamicAp = PureAp, impureDynamicValue = dynX}
     = ImpureDynamic{..}
   where
+    impureDynamicAp = ImpureAp
     impureDynamicValue
       = dynApplyBug ["incompatible type when applying impure function to pure value (2)"]
-                    (dynApplyBug ["incompatible type when applying impure function to pure value (1)"] dynMeta dynF)
+                    (dynApplyBug ["incompatible type when applying impure function to pure value (1)"] apReverseFmap dynF)
                     dynX
-apply ImpureDynamic {impureDynamicAp = ImpureAp{}, impureDynamicValue = dynF}
-      ImpureDynamic {impureDynamicAp = impureDynamicAp @ ImpureAp {impureApAp = dynMeta}, impureDynamicValue = dynX}
+apply Ap{..}
+      ImpureDynamic {impureDynamicAp = ImpureAp, impureDynamicValue = dynF}
+      ImpureDynamic {impureDynamicAp = ImpureAp, impureDynamicValue = dynX}
     = ImpureDynamic{..}
   where
+    impureDynamicAp = ImpureAp
     impureDynamicValue
       = dynApplyBug ["incompatible type when applying impure function to impure value (2)"]
-                    (dynApplyBug ["incompatible type when applying impure function to impure value (1)"] dynMeta dynF)
+                    (dynApplyBug ["incompatible type when applying impure function to impure value (1)"] apAp dynF)
                     dynX
 
 dynApplyBug :: [String] -> Dynamic -> Dynamic -> Dynamic
