@@ -49,13 +49,20 @@ impureDynamicTypeRep = pureType
 
 applyImpureDynamic :: forall m. Applicative m => ImpureDynamic m -> ImpureDynamic m -> Maybe (ImpureDynamic m)
 applyImpureDynamic f x = do
-  resultType <- funResultTy (pureType f) (pureType x)
-  let (resultPurity, resultValue) = case (purity f, purity x) of
-        (Pure, Pure) -> (Pure, unsafeCoerce (value f) (value x))
-        (Pure, Impure) -> (Impure, undefined)
-        (Impure, Pure) -> (Impure, undefined)
-        (Impure, Impure) -> (Impure, undefined)
-  return ImpureDynamic {value = resultValue, pureType = resultType, purity = resultPurity}
+    resultType <- funResultTy (pureType f) (pureType x)
+    return ImpureDynamic {value = resultValue, pureType = resultType, purity = resultPurity}
+  where
+    (resultPurity, resultValue) = case (purity f, purity x) of
+      (Pure, Pure) -> (Pure, unsafeCoerce (value f) (value x))
+      (Pure, Impure) -> (Impure, (unsafeCoerce . unsafeCoerce) monoFmap (value f) (value x))
+      (Impure, Pure) -> (Impure, (unsafeCoerce . unsafeCoerce) monoReverseFmap (value f) (value x))
+      (Impure, Impure) -> (Impure, (unsafeCoerce . unsafeCoerce) monoAp (value f) (value x))
+    monoFmap :: (() -> ()) -> m () -> m ()
+    monoFmap = fmap
+    monoReverseFmap :: m (() -> ()) -> () -> m ()
+    monoReverseFmap g y = ($ y) <$> g
+    monoAp :: m (() -> ()) -> m () -> m ()
+    monoAp = (<*>)
 
 -- only using this for type hackery, not worth pulling in a dependency
 newtype Compose f g a = Compose (f (g a))
