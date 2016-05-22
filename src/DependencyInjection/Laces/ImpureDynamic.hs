@@ -5,6 +5,7 @@ module DependencyInjection.Laces.ImpureDynamic
 , unImpureDynamic
 , impureDynamicTypeRep
 , applyImpureDynamic
+, Purity(..)
 , module Data.Typeable
 )
 where

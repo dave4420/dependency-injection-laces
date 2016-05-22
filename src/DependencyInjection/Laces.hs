@@ -20,6 +20,7 @@ module DependencyInjection.Laces
 where
 
 import Control.Exception
+import Control.Monad (join)
 import Data.Functor.Identity
 import qualified Data.Map as M
 import Data.Maybe
@@ -50,6 +51,7 @@ data Dependencies m = Dependencies
   { dependenciesTarget :: TypeRep
   , dependenciesDependencies :: [TypeRep]
   , dependenciesFinalise :: ImpureDynamic m
+  , dependenciesPurity :: Purity
   }
 
 class Typeable a => Dependable a where
@@ -58,11 +60,11 @@ class Typeable a => Dependable a where
 
 instance Typeable a => Dependable (Inject a) where
   type Context (Inject a) m = ()
-  depend a = Dependencies (typeRep a) [] (toPureDynamic (unInject :: Inject a -> a))
+  depend a = Dependencies (typeRep a) [] (toPureDynamic (unInject :: Inject a -> a)) Pure
 
 instance (Monad m, Typeable m, Typeable a) => Dependable (InjectM m a) where
   type Context (InjectM m a) m' = m ~ m'
-  depend ma = undefined
+  depend ma = Dependencies (typeRep ma) [] (toPureDynamic (unInjectM :: InjectM m a -> m a)) Impure
 
 instance (Typeable i, Dependable o) => Dependable (i -> o) where
   type Context (i -> o) m = Context o m
@@ -72,8 +74,12 @@ instance (Typeable i, Dependable o) => Dependable (i -> o) where
 newtype Flip a b c = Flip (a c b)
 
 use :: Dependable a => a -> (forall m. Context a m => ModuleM m)
-use factory = Module $ M.singleton dependenciesTarget [Injection (toPureDynamic factory) dependenciesDependencies dependenciesFinalise] where
+use factory = Module $ M.singleton dependenciesTarget [Injection{..}] where
   Dependencies{..} = depend factory
+  injectionBase = toPureDynamic factory
+  injectionDependencies = dependenciesDependencies
+  injectionFinalise = dependenciesFinalise
+  injectionPurity = dependenciesPurity
 
 
 newtype ModuleM (m :: * -> *) = Module (M.Map TypeRep [Injection m])
@@ -83,6 +89,7 @@ data Injection m = Injection
   { injectionBase :: ImpureDynamic m
   , injectionDependencies :: [TypeRep]
   , injectionFinalise :: ImpureDynamic m
+  , injectionPurity :: Purity
   }
 
 data DependencyError = MissingDependency TypeRep | DuplicateDependency TypeRep
@@ -117,12 +124,17 @@ componentWhyM = sequence . componentWhyF
 componentWhyF :: forall m a. (Monad m, Typeable m, Typeable a) => ModuleM m -> Either [DependencyError] (m a)
 componentWhyF (Module moduleMap) = ret where
   ret :: Either [DependencyError] (m a)
-  ret = fmap unImpureDynamicBug (dependency $ typeRep $ Compose ret)
+  ret = fmap (uncurry ($)) (dependencyAndExtractor $ typeRep $ Compose ret)
   dependency :: TypeRep -> Either [DependencyError] (ImpureDynamic m)
-  dependency rep = case fromMaybe [] (M.lookup rep moduleMap) of
+  dependency = fmap snd . dependencyAndExtractor
+  dependencyAndExtractor :: TypeRep -> Either [DependencyError] (ImpureDynamic m -> m a, ImpureDynamic m)
+  dependencyAndExtractor rep = case fromMaybe [] (M.lookup rep moduleMap) of
     []              -> Left [MissingDependency rep]
-    [Injection{..}] -> fmap (applyBug injectionFinalise)
-                       $ foldr cons (Right injectionBase) (reverse injectionDependencies)
+    [Injection{..}] -> let extractor = case injectionPurity of
+                                          Pure   -> unImpureDynamicBug
+                                          Impure -> join . unImpureDynamicBug
+                        in (,) extractor . applyBug injectionFinalise
+                           <$> foldr cons (Right injectionBase) (reverse injectionDependencies)
     _               -> Left [DuplicateDependency rep]
   cons :: TypeRep -> Either [DependencyError] (ImpureDynamic m) -> Either [DependencyError] (ImpureDynamic m)
   cons xRep fDyn = applyBug <$> fDyn <+> dependency xRep
