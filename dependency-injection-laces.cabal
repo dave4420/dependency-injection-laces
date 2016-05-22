@@ -24,6 +24,8 @@ library
   default-extensions:  RecordWildCards
                      , ScopedTypeVariables
                      , KindSignatures
+                     , ConstraintKinds
+                     , TypeFamilies
                      , RankNTypes
 
 test-suite dependency-injection-laces-test

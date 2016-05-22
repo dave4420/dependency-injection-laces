@@ -24,6 +24,7 @@ import Data.Functor.Identity
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Monoid
+import GHC.Exts (Constraint)
 
 import DependencyInjection.Laces.ImpureDynamic
 
@@ -52,21 +53,25 @@ data Dependencies m = Dependencies
   }
 
 class Typeable a => Dependable a where
-  depend :: a -> (forall m. Dependencies m)
+  type Context a (m :: * -> *) :: Constraint
+  depend :: a -> (forall m. Context a m => Dependencies m)
 
 instance Typeable a => Dependable (Inject a) where
+  type Context (Inject a) m = ()
   depend a = Dependencies (typeRep a) [] (toPureDynamic (unInject :: Inject a -> a))
 
 instance (Monad m, Typeable m, Typeable a) => Dependable (InjectM m a) where
+  type Context (InjectM m a) m' = m ~ m'
   depend ma = undefined
 
 instance (Typeable i, Dependable o) => Dependable (i -> o) where
+  type Context (i -> o) m = Context o m
   depend f = inner {dependenciesDependencies = typeRep (Flip f) : dependenciesDependencies inner} where
     inner = (depend $ f undefined)
 
 newtype Flip a b c = Flip (a c b)
 
-use :: Dependable a => a -> Module
+use :: Dependable a => a -> (forall m. Context a m => ModuleM m)
 use factory = Module $ M.singleton dependenciesTarget [Injection (toPureDynamic factory) dependenciesDependencies dependenciesFinalise] where
   Dependencies{..} = depend factory
 
